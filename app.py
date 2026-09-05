@@ -6,9 +6,24 @@ import traceback
 
 from flask import Flask, request, jsonify, render_template
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
 
 from google import genai
 from google.genai import types
+
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES (For GitHub Security)
+# =========================================================
+# Ye line local system me .env file padhegi aur Render par environment variables
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY is missing. "
+        "Please add it to your Render Environment Variables or local .env file."
+    )
 
 # =========================================================
 # FLASK APP
@@ -19,11 +34,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # =========================================================
-# GEMINI CLIENT (Mistral Removed Completely)
+# GEMINI CLIENT
 # =========================================================
-# Apni wahi AQ wali key yahan daal do
-GEMINI_API_KEY = "AQ.Ab8RN6Lr3SLqEEUfSlszoh9zW1kY5pgSGWq5f7HNLMpvuUciwg"
-
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Correct model for fast & accurate document extraction
@@ -63,7 +75,7 @@ RESPONSE_SCHEMA = {
 }
 
 # =========================================================
-# EXTRACTION PROMPT (Strict DD-MM-YYYY format added)
+# EXTRACTION PROMPT (Strict DD-MM-YYYY format)
 # =========================================================
 EXTRACTION_PROMPT = """
 You are an expert vehicle logsheet data extraction system.
