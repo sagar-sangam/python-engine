@@ -39,7 +39,7 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Correct model for fast & accurate document extraction
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-3.6-flash"
 
 # =========================================================
 # JSON RESPONSE SCHEMA
