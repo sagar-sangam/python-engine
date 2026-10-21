@@ -4,7 +4,7 @@ import uuid
 import traceback
 import requests
 import re
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
 # =========================================================
@@ -16,16 +16,20 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # =========================================================
-# MISTRAL CONFIGURATION 
+# MISTRAL CONFIGURATION (Updated with New API Key)
 # =========================================================
-MISTRAL_API_KEY = "mstrl_UVMS4UUWJNCHTjX7a2aSfxyPyP7tNIVw_3ka9kq"
+MISTRAL_API_KEY = os.getenv(
+    "MISTRAL_API_KEY",
+    "mstrl_pZtxx7OM0t2or54d3fHOWJkTk0tlIW2O_3FFzaE"
+).strip()
+
 HEADERS = {
     "Authorization": f"Bearer {MISTRAL_API_KEY}",
     "Content-Type": "application/json"
 }
 
 # =========================================================
-# EXTRACTION PROMPT 
+# EXTRACTION PROMPT
 # =========================================================
 EXTRACTION_PROMPT = """
 You are an expert vehicle logsheet data extraction system.
@@ -44,8 +48,9 @@ You must return a JSON object with a single key "log_entries" which is an array 
 ["date", "start_km", "close_km", "total_km", "start_time", "close_time", "total_hrs", "extra_km", "extra_hrs", "toll", "remarks"]
 """
 
+
 # =========================================================
-# PROCESS PDF WITH MISTRAL OCR (Handles Scanned PDFs)
+# PROCESS PDF WITH MISTRAL OCR (Handles Scanned PDFs & Images)
 # =========================================================
 def process_with_mistral_ocr(file_path, filename):
     try:
@@ -53,42 +58,72 @@ def process_with_mistral_ocr(file_path, filename):
         print("📄 MISTRAL OCR & EXTRACTION")
         print("========================================")
 
-        # 1. Upload PDF to Mistral Files API
-        print("⬆️ Uploading file to Mistral OCR...")
+        # 1. Upload PDF/Image to Mistral Files API
+        print(f"⬆️ Uploading '{filename}' to Mistral OCR...")
         upload_url = "https://api.mistral.ai/v1/files"
-        
+
+        ext = os.path.splitext(filename)[1].lower()
+        mime_map = {
+            ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp"
+        }
+        mime_type = mime_map.get(ext, "application/pdf")
+
         with open(file_path, "rb") as f:
-            files = {"file": (filename, f, "application/pdf")}
+            files = {"file": (filename, f, mime_type)}
             data = {"purpose": "ocr"}
-            
+
             upload_res = requests.post(
-                upload_url, 
-                headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"}, 
-                files=files, 
-                data=data
+                upload_url,
+                headers={"Authorization": f"Bearer {MISTRAL_API_KEY}"},
+                files=files,
+                data=data,
+                timeout=120
             )
-            
-            if upload_res.status_code != 200:
-                return {"error": f"Mistral File Upload Failed ({upload_res.status_code}): {upload_res.text}"}
-                
+
+            if not upload_res.ok:
+                err_msg = f"Mistral File Upload Failed ({upload_res.status_code}): {upload_res.text}"
+                print(f"❌ {err_msg}")
+                return {"error": err_msg}
+
             file_id = upload_res.json()["id"]
+            print(f"✅ File Uploaded Successfully! File ID: {file_id}")
 
         # 2. Get Signed URL
-        url_res = requests.get(f"https://api.mistral.ai/v1/files/{file_id}/url", headers=HEADERS)
-        url_res.raise_for_status()
+        url_res = requests.get(
+            f"https://api.mistral.ai/v1/files/{file_id}/url",
+            headers=HEADERS,
+            timeout=60
+        )
+        if not url_res.ok:
+            err_msg = f"Mistral Signed URL Failed ({url_res.status_code}): {url_res.text}"
+            print(f"❌ {err_msg}")
+            return {"error": err_msg}
+
         signed_url = url_res.json()["url"]
 
         # 3. Run Mistral OCR
-        print("🔍 Running Mistral OCR on PDF...")
+        print("🔍 Running Mistral OCR on document...")
+        doc_type = "image_url" if mime_type.startswith("image/") else "document_url"
         ocr_payload = {
             "model": "mistral-ocr-latest",
-            "document": {"type": "document_url", "document_url": signed_url}
+            "document": {"type": doc_type, doc_type: signed_url}
         }
-        ocr_headers = HEADERS.copy()
-        ocr_headers["Content-Type"] = "application/json"
-        
-        ocr_res = requests.post("https://api.mistral.ai/v1/ocr", headers=ocr_headers, json=ocr_payload)
-        ocr_res.raise_for_status()
+
+        ocr_res = requests.post(
+            "https://api.mistral.ai/v1/ocr",
+            headers=HEADERS,
+            json=ocr_payload,
+            timeout=180
+        )
+        if not ocr_res.ok:
+            err_msg = f"Mistral OCR Failed ({ocr_res.status_code}): {ocr_res.text}"
+            print(f"❌ {err_msg}")
+            return {"error": err_msg}
+
         ocr_result = ocr_res.json()
 
         # 4. Combine Markdown from all pages
@@ -97,14 +132,16 @@ def process_with_mistral_ocr(file_path, filename):
             full_markdown += page.get("markdown", "") + "\n\n"
 
         if not full_markdown.strip():
-            return {"error": "Mistral OCR found no text in the PDF."}
+            err_msg = "Mistral OCR found no text in the uploaded file."
+            print(f"⚠️ {err_msg}")
+            return {"error": err_msg}
 
         print("🧠 Sending OCR markdown to Mistral Chat Model...")
-        
+
         # 5. Send to Chat Model for Structured JSON Extraction
         chat_payload = {
             "model": "mistral-small-latest",
-            "response_format": {"type": "json_object"}, 
+            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": EXTRACTION_PROMPT},
                 {"role": "user", "content": f"OCR TEXT:\n{full_markdown}"}
@@ -112,34 +149,46 @@ def process_with_mistral_ocr(file_path, filename):
             "temperature": 0.1,
             "max_tokens": 8000
         }
-        
-        chat_res = requests.post("https://api.mistral.ai/v1/chat/completions", headers=ocr_headers, json=chat_payload)
-        chat_res.raise_for_status()
-        
-        ai_response = chat_res.json()['choices'][0]['message']['content']
 
-        # --- FIX: Clean Markdown backticks from AI Response ---
-        ai_response = re.sub(r'^```json\s*', '', ai_response.strip(), flags=re.IGNORECASE)
-        ai_response = re.sub(r'\s*```$', '', ai_response.strip())
-        
+        chat_res = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers=HEADERS,
+            json=chat_payload,
+            timeout=180
+        )
+        if not chat_res.ok:
+            err_msg = f"Mistral Chat Extraction Failed ({chat_res.status_code}): {chat_res.text}"
+            print(f"❌ {err_msg}")
+            return {"error": err_msg}
+
+        ai_response = chat_res.json()["choices"][0]["message"]["content"]
+
+        # Clean Markdown backticks from AI Response
+        ai_response = re.sub(r"^```json\s*", "", ai_response.strip(), flags=re.IGNORECASE)
+        ai_response = re.sub(r"\s*```$", "", ai_response.strip())
+
         parsed_json = json.loads(ai_response)
         log_entries = parsed_json.get("log_entries", [])
 
         # 6. Clean and format entries
         cleaned_entries = []
         for row in log_entries:
-            if not isinstance(row, dict): continue
-            
+            if not isinstance(row, dict):
+                continue
+
             def parse_duration_hrs(val):
                 if isinstance(val, str) and ":" in val:
                     parts = val.split(":")
-                    return float(parts[0]) + (float(parts[1]) / 60 if len(parts) > 1 else 0)
+                    try:
+                        return round(float(parts[0]) + (float(parts[1]) / 60 if len(parts) > 1 else 0), 2)
+                    except ValueError:
+                        return 0
                 try:
                     val = float(val)
-                    if val > 1000:  
-                        return round(val / 1000, 2) 
+                    if val > 1000:
+                        return round(val / 1000, 2)
                     return round(val, 2)
-                except:
+                except (ValueError, TypeError):
                     return 0
 
             cleaned_row = {
@@ -150,6 +199,7 @@ def process_with_mistral_ocr(file_path, filename):
                 "start_time": str(row.get("start_time", "00:00:00")),
                 "close_time": str(row.get("close_time", "00:00:00")),
                 "total_hrs": parse_duration_hrs(row.get("total_hrs", 0)),
+                "extra_km": row.get("extra_km", 0),
                 "extra_hrs": parse_duration_hrs(row.get("extra_hrs", 0)),
                 "toll": row.get("toll", 0),
                 "remarks": str(row.get("remarks", ""))
@@ -169,7 +219,13 @@ def process_with_mistral_ocr(file_path, filename):
 # =========================================================
 @app.route("/")
 def home():
-    return render_template("index.html")
+    # Returns a JSON health check instead of crashing when templates/index.html is missing
+    return jsonify({
+        "status": "ok",
+        "service": "Vijay Travel AI OCR Engine (Mistral)",
+        "key_configured": bool(MISTRAL_API_KEY)
+    }), 200
+
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
@@ -177,15 +233,15 @@ def upload_file():
         return jsonify({"error": "No file uploaded."}), 400
 
     file = request.files["pdf_file"]
-    if file.filename == '':
+    if file.filename == "":
         return jsonify({"error": "Empty filename."}), 400
 
     original_filename = secure_filename(file.filename)
     unique_filename = str(uuid.uuid4()) + "_" + original_filename
     file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_filename)
 
-    result = None  # Safely initializing result
-    
+    result = None
+
     try:
         file.save(file_path)
         result = process_with_mistral_ocr(file_path, original_filename)
@@ -195,10 +251,9 @@ def upload_file():
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
-            except:
+            except Exception:
                 pass
 
-    # Safety check to prevent NoneType error completely
     if result is None:
         return jsonify({"error": "Critical Error: Process returned nothing."}), 500
 
