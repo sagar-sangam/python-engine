@@ -18,7 +18,7 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 # =========================================================
 # MISTRAL CONFIGURATION 
 # =========================================================
-MISTRAL_API_KEY = "gjFLmcHUW4dOw1NbQIlKEaqhirII0DfP"
+MISTRAL_API_KEY = "mstrl_UVMS4UUWJNCHTjX7a2aSfxyPyP7tNIVw_3ka9kq"
 HEADERS = {
     "Authorization": f"Bearer {MISTRAL_API_KEY}",
     "Content-Type": "application/json"
