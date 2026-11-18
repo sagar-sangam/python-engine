@@ -20,7 +20,7 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 # =========================================================
 MISTRAL_API_KEY = os.getenv(
     "MISTRAL_API_KEY",
-    "mstrl_pZtxx7OM0t2or54d3fHOWJkTk0tlIW2O_3FFzaE"
+    "mstrl_xPvu1HbvKzGn8E6Fv5guZqSNwLrWt6uY_3T6x9t"
 ).strip()
 
 HEADERS = {
